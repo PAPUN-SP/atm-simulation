@@ -1,0 +1,7 @@
+services:
+  atm:
+    build: .
+    image: atm-simulation
+    ports:
+      - "9090:8080"
+    restart: unless-stopped

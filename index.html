@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ATM Simulation System</title>
+<style>
+  :root { --purple:#5b2fc9; --bg:#eef0f6; --body:#5a6275; --screen:#0d2b4a; --ink:#e8f1ff; --card:#fff; --text:#1c2230; --err:#ff8a8a; --ok:#8dffb0; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14161d; --body:#2a2e3b; --card:#1d2029; --text:#e8eaf2; } }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--text); font-family:system-ui,Segoe UI,Roboto,sans-serif; padding:16px; }
+  .atm { width:min(720px,100%); background:var(--body); border-radius:22px; padding:18px; box-shadow:0 20px 50px rgba(0,0,0,.25); }
+  .brand { background:var(--purple); color:#fff; text-align:center; font-weight:800; letter-spacing:3px; border-radius:8px; padding:8px; margin-bottom:14px; }
+  .row { display:flex; gap:14px; align-items:stretch; }
+  .screen { flex:1; min-height:340px; background:var(--screen); color:var(--ink); border-radius:12px; padding:18px; border:6px solid #1b1e27; display:flex; flex-direction:column; gap:10px; }
+  .screen h2 { margin:0; font-size:1.15rem; }
+  .muted { opacity:.75; font-size:.85rem; }
+  .msg { min-height:1.3em; font-size:.9rem; } .msg.err { color:var(--err); } .msg.ok { color:var(--ok); }
+  input { width:100%; padding:10px; border-radius:8px; border:1px solid #3d6b9c; background:#08213a; color:var(--ink); font-size:1rem; }
+  label { font-size:.8rem; opacity:.8; display:block; margin-bottom:4px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:6px; }
+  button { cursor:pointer; border:0; border-radius:8px; padding:11px; font-size:.95rem; font-weight:600; background:var(--purple); color:#fff; }
+  button.alt { background:#2a4f78; } button:hover { filter:brightness(1.15); } button:focus-visible { outline:2px solid #fff; }
+  .quick { display:flex; gap:8px; flex-wrap:wrap; } .quick button { flex:1; padding:8px; background:#2a4f78; }
+  table { width:100%; border-collapse:collapse; font-size:.8rem; } th,td { text-align:left; padding:5px 4px; border-bottom:1px solid #24496f; } td.r,th.r { text-align:right; }
+  .slot { width:130px; display:flex; flex-direction:column; gap:10px; justify-content:center; }
+  .slot div { height:14px; background:#1b1e27; border-radius:4px; }
+  .cash { height:34px !important; background:linear-gradient(90deg,#3c9a5a,#6fd08c) !important; }
+  .hint { margin-top:14px; font-size:.8rem; color:var(--text); background:var(--card); padding:10px 14px; border-radius:10px; }
+  @media (max-width:560px){ .slot{display:none} }
+</style>
+</head>
+<body>
+<main class="atm">
+  <div class="brand">ATM</div>
+  <div class="row">
+    <section class="screen" id="screen" aria-live="polite"></section>
+    <aside class="slot" aria-hidden="true"><div></div><div></div><div></div><div class="cash"></div></aside>
+  </div>
+  <p class="hint">Demo cards: <b>1001 / 1234</b>, <b>1002 / 4321</b>. A card blocks after 3 wrong PINs.</p>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const screen = $('#screen');
+const inr = n => '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+let token = null, user = null, idle;
+
+async function api(path, method = 'GET', body) {
+  const res = await fetch('/api/' + path, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await res.json();
+  if (!res.ok) { if (res.status === 401 && token) logout(true); throw new Error(data.error || 'Error'); }
+  return data;
+}
+function say(text, kind = '') { const m = $('#msg'); if (m) { m.textContent = text; m.className = 'msg ' + kind; } }
+function resetIdle() { clearTimeout(idle); if (token) idle = setTimeout(() => logout(true), 120000); }
+
+function loginView(note = '') {
+  screen.innerHTML = `
+    <h2>Welcome!</h2><div class="muted">Insert card details to begin</div>
+    <div><label for="acc">Account number</label><input id="acc" inputmode="numeric" autocomplete="off"></div>
+    <div><label for="pin">PIN</label><input id="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="off"></div>
+    <button id="go">Login</button><div id="msg" class="msg ${note ? 'ok' : ''}">${note}</div>`;
+  $('#go').onclick = async () => {
+    try {
+      token = (await api('login', 'POST', { account: $('#acc').value.trim(), pin: $('#pin').value })).token;
+      user = await api('balance'); menuView();
+    } catch (e) { say(e.message, 'err'); }
+  };
+  $('#pin').onkeydown = e => { if (e.key === 'Enter') $('#go').click(); };
+}
+function menuView(note = '', kind = 'ok') {
+  resetIdle();
+  screen.innerHTML = `
+    <h2>Hello, ${user.holder}</h2><div class="muted">Please select an option</div>
+    <div class="grid">
+      <button data-v="withdraw">↑ Withdraw</button><button data-v="deposit">↓ Deposit</button>
+      <button data-v="balance">Balance Enquiry</button><button data-v="statement">Mini Statement</button>
+      <button data-v="pin" class="alt">Change PIN</button><button data-v="exit" class="alt">Exit</button>
+    </div><div id="msg" class="msg ${kind}">${note}</div>`;
+  screen.querySelectorAll('[data-v]').forEach(b => b.onclick = () => ({
+    withdraw: () => amountView('withdraw'), deposit: () => amountView('deposit'),
+    balance: balanceView, statement: statementView, pin: pinView, exit: () => logout()
+  })[b.dataset.v]());
+}
+function backBtn() { return '<button class="alt" id="back">← Back</button>'; }
+
+function amountView(kind) {
+  resetIdle();
+  const w = kind === 'withdraw';
+  screen.innerHTML = `
+    <h2>${w ? 'Withdraw cash' : 'Deposit cash'}</h2>
+    <div class="quick">${[500, 1000, 2000, 5000].map(v => `<button data-a="${v}">${v}</button>`).join('')}</div>
+    <div><label for="amt">Amount (₹)</label><input id="amt" type="number" min="1" step="${w ? 100 : 1}"></div>
+    <button id="ok">${w ? 'Withdraw' : 'Deposit'}</button>${backBtn()}<div id="msg" class="msg"></div>`;
+  screen.querySelectorAll('[data-a]').forEach(b => b.onclick = () => $('#amt').value = b.dataset.a);
+  $('#back').onclick = () => menuView();
+  $('#ok').onclick = async () => {
+    try {
+      const r = await api(kind, 'POST', { amount: $('#amt').value });
+      menuView(`${r.message}. Balance: ${inr(r.balance)}`);
+    } catch (e) { say(e.message, 'err'); }
+  };
+}
+async function balanceView() {
+  resetIdle();
+  try {
+    const r = await api('balance');
+    screen.innerHTML = `<h2>Balance Enquiry</h2><div class="muted">Account ${r.account}</div>
+      <div style="font-size:2rem;font-weight:700">${inr(r.balance)}</div>${backBtn()}`;
+    $('#back').onclick = () => menuView();
+  } catch (e) { /* session handled in api() */ }
+}
+async function statementView() {
+  resetIdle();
+  try {
+    const { transactions } = await api('statement');
+    const rows = transactions.map(t => `<tr><td>${t.time.replace('T', ' ')}</td><td>${t.type}</td><td class="r">${inr(t.amount)}</td><td class="r">${inr(t.balance)}</td></tr>`).join('');
+    screen.innerHTML = `<h2>Mini Statement</h2><div class="muted">Last 5 transactions</div>
+      ${rows ? `<table><tr><th>Time</th><th>Type</th><th class="r">Amount</th><th class="r">Balance</th></tr>${rows}</table>` : '<div>No transactions yet.</div>'}${backBtn()}`;
+    $('#back').onclick = () => menuView();
+  } catch (e) { }
+}
+function pinView() {
+  resetIdle();
+  screen.innerHTML = `<h2>Change PIN</h2>
+    <div><label for="o">Current PIN</label><input id="o" type="password" inputmode="numeric" maxlength="4"></div>
+    <div><label for="n">New 4-digit PIN</label><input id="n" type="password" inputmode="numeric" maxlength="4"></div>
+    <button id="ok">Update PIN</button>${backBtn()}<div id="msg" class="msg"></div>`;
+  $('#back').onclick = () => menuView();
+  $('#ok').onclick = async () => {
+    try { const r = await api('pin', 'POST', { oldPin: $('#o').value, newPin: $('#n').value }); menuView(r.message); }
+    catch (e) { say(e.message, 'err'); }
+  };
+}
+async function logout(expired = false) {
+  clearTimeout(idle);
+  if (token && !expired) { try { await api('logout', 'POST'); } catch (e) { } }
+  token = user = null;
+  loginView(expired ? 'Session ended. Please log in again.' : 'Thank you for banking with us!');
+}
+loginView();
+</script>
+</body>
+</html>
