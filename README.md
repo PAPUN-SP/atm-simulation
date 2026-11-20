@@ -52,7 +52,7 @@ Environment variables: `PORT` (default 8080), `WEB_DIR` (default `web`).
 ## Demo accounts
 | Account | PIN  | Holder       | Opening balance |
 |---------|------|--------------|-----------------|
-| 1001    | 1234 | Alice Kumar  | 5,000           |
+| 1001    | 1234 | Soumendra    | 5,000           |
 | 1002    | 4321 | Bob Rao      | 12,000          |
 | 1003    | 1111 | Carol Singh  | 250             |
 
